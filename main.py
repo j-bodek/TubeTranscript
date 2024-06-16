@@ -1,15 +1,12 @@
 import pytube
-from anyio import to_thread, to_process
-import json
+from anyio import to_thread
 import time
 import asyncio
-from io import BytesIO
-from pytube import request
-from urllib.error import HTTPError
 import speech_recognition as sr
 from os import path
 from pydub import AudioSegment
 import os
+import tempfile
 
 
 def _get_stream(video) -> tuple[str, str]:
@@ -54,42 +51,34 @@ async def get_streams(channel):
 
 
 async def download_file(stream, output_path):
-    return await to_process.run_sync(_download_file, stream, output_path)
+    return await to_thread.run_sync(_download_file, stream, output_path)
 
 
 def _download_file(stream, output_path):
-    og_file, audio_file = None, None
+    with tempfile.NamedTemporaryFile(
+        suffix=f".{stream.subtype}", delete=True
+    ) as og_file:
+        stream.download(filename=og_file.name)
+        sound = AudioSegment.from_file(og_file.name)
 
-    try:
-        file = stream.download()
-        sound = AudioSegment.from_file(file)
-        name, _ = file.split(".")
-        og_file = file
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{stream.subtype}", delete=True
+        ) as audio_file:
 
-        new_file = f"{name}.wav"
-        sound.export(new_file, format="wav")
+            sound.export(audio_file.name, format="wav")
 
-        os.remove(file)
-        audio_file, og_file = new_file, None
+            r = sr.Recognizer()
+            with sr.AudioFile(audio_file.name) as source:
+                audio = r.record(source)
+                try:
+                    text = r.recognize_whisper(audio)
+                    with open(output_path, "w") as f:
+                        f.write(text)
 
-        r = sr.Recognizer()
-        with sr.AudioFile(new_file) as source:
-            audio = r.record(source)
-            try:
-                text = r.recognize_whisper(audio)
-                with open(output_path, "w") as f:
-                    f.write(text)
-
-            except sr.exceptions.TranscriptionFailed as e:
-                print("Transcription failed")
-            except Exception as e:
-                print(f"Error while transcribing - {e}")
-    finally:
-        if og_file:
-            os.remove(og_file)
-
-        if audio_file:
-            os.remove(audio_file)
+                except sr.exceptions.TranscriptionFailed as e:
+                    print("Transcription failed")
+                except Exception as e:
+                    print(f"Error while transcribing - {e}")
 
 
 async def main():
