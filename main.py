@@ -9,6 +9,9 @@ import os
 import tempfile
 from typing import AsyncGenerator
 import logging
+import json
+from collections import deque
+from tqdm.asyncio import tqdm
 
 logging.basicConfig(level=logging.INFO)
 logging.basicConfig(level=logging.ERROR)
@@ -53,6 +56,10 @@ class ChannelCrawler:
         self.batch = batch
         self.output_dir = self._output_dir(output_dir)
         self.background_processes = background_processes
+        self._videos = deque([])
+
+        # Fetch videos
+        self.videos
 
     def _output_dir(self, output_dir: str) -> str:
         _dir = f"{output_dir.rstrip('/')}/{self.channel.channel_id}/"
@@ -61,10 +68,26 @@ class ChannelCrawler:
 
         return _dir
 
-    async def crawl(self):
-        tasks = []
-        async for _id, stream in self.list():
+    @property
+    def videos(self):
+        if not self._videos:
+            logging.info("Fetching videos...")
+            for video in self.channel.videos:
+                self._videos.append(video)
 
+                if len(self._videos) % 100 == 0:
+                    logging.info(f"Videos fetched: {len(self._videos)}")
+
+            logging.info(f"All videos fetched: {len(self._videos)}\n")
+
+        return self._videos
+
+    async def transcribe(self):
+
+        logging.info("Running transcriptions\n")
+        tasks = []
+
+        async for _id, stream in tqdm(self.list(), total=len(self.videos)):
             tasks.append(
                 download_file(stream, output_path=f"{self.output_dir}{_id}.txt")
             )
@@ -121,7 +144,7 @@ async def main():
     url = "https://www.youtube.com/@squewe"
 
     crawler = ChannelCrawler(url, output_dir="files/")
-    await crawler.crawl()
+    await crawler.transcribe()
 
 
 if __name__ == "__main__":
