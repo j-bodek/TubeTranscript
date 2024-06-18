@@ -8,14 +8,16 @@ from typing import AsyncGenerator, Callable
 from queue import Queue
 from multiprocessing import pool
 from contextlib import contextmanager
+from src.utils import download_file
+from src.schemas import TranscriptionMsg
 
 logging.basicConfig(level=logging.INFO)
 logging.basicConfig(level=logging.ERROR)
 
 
 class VideoFetcher:
-    def __init__(self, url: str, queue: Queue, timeout: int = 60 * 60):
-        self.channel = pytube.Channel(url)
+    def __init__(self, channel: pytube.Channel, queue: Queue, timeout: int = 60 * 60):
+        self.channel = channel
         self.running = False
 
         self._queue = queue
@@ -59,7 +61,7 @@ class VideoFetcher:
 
 class YoutubeCrawler:
     def __init__(self, url: str, batch: int = 5):
-        self.url = url
+        self.channel = pytube.Channel(url)
         self.batch = batch
 
         self._videos = Queue(maxsize=10000)
@@ -87,7 +89,7 @@ class YoutubeCrawler:
     async def list(self) -> AsyncGenerator[str, pytube.Stream]:
         """Generate ids and streams urls of the channel videos"""
 
-        with VideoFetcher(self.url, self._videos).run_async() as video_fetcher:
+        with VideoFetcher(self.channel, self._videos).run_async() as video_fetcher:
 
             tasks, pbar = [], tqdm(total=video_fetcher._total, desc="Fetching videos")
 
@@ -115,4 +117,61 @@ class YoutubeCrawler:
 
 
 class Transcriptor:
-    pass
+    def __init__(
+        self,
+        output_dir: str,
+        background_processes: int = 5,
+        max_queuesize: int = 50,
+        timeout: int = 60 * 60,
+    ):
+        self.output_dir = output_dir
+
+        self._tasks = 0
+        self._pool = pool.ThreadPool(processes=background_processes)
+        self._queue = Queue(maxsize=max_queuesize)
+        self._timeout = timeout
+        self._running = False
+
+    def _get_output_path(self, _id: str) -> str:
+        return f"{self.output_dir}{_id}.txt"
+
+    def _error_callback(self, e: Exception, *args, **kwargs):
+        logging.error(f"Error while transcribing - {e}")
+        self._tasks = max(0, self._tasks - 1)
+
+    def _callback(self, *args, **kwargs):
+        self._tasks -= max(0, self._tasks - 1)
+
+    def _run_transcription_worker(self):
+        self._pool.apply_async(
+            self._transcription_worker,
+            callback=self._callback,
+            error_callback=self._error_callback,
+        )
+        self._tasks += 1
+
+    def _transcription_worker(self):
+        while True:
+            if self._queue.empty():
+                break
+
+            msg = self._queue.get()
+            download_file(msg.stream, self._get_output_path(msg.video_id))
+
+    @contextmanager
+    def start(self):
+        try:
+            self._running = True
+            yield self
+        finally:
+            self._pool.close()
+            self._pool.join()
+            self._running = False
+
+    def transcribe_async(self, stream: pytube.Stream, _id: str):
+        msg = TranscriptionMsg(video_id=_id, stream=stream)
+        self._queue.put(msg, timeout=self._timeout)
+
+        if self._tasks < self._pool._processes:
+            # print("PUTTING TO WORKER ", self._tasks)
+            self._run_transcription_worker()
