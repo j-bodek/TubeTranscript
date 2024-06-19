@@ -6,6 +6,7 @@ from tqdm.asyncio import tqdm
 import asyncio
 from typing import AsyncGenerator, Callable
 from queue import Queue
+from threading import Lock
 from multiprocessing import pool
 from contextlib import contextmanager
 from src.utils import download_file
@@ -59,13 +60,12 @@ class VideoFetcher:
             self._queue.put(video, timeout=self._timeout)
 
 
-class YoutubeCrawler:
+class StreamFetcher:
     def __init__(self, url: str, batch: int = 5):
         self.channel = pytube.Channel(url)
         self.batch = batch
 
         self._videos = Queue(maxsize=10000)
-        self._total_videos: int = 0
 
     async def get_stream(self, video) -> tuple[str, pytube.Stream]:
         return await to_thread.run_sync(self._get_stream, video)
@@ -111,7 +111,7 @@ class YoutubeCrawler:
                         if not stream:
                             continue
 
-                        yield _id, stream
+                        yield _id, stream, video_fetcher._total
 
                     tasks = []
 
@@ -131,6 +131,8 @@ class Transcriptor:
         self._queue = Queue(maxsize=max_queuesize)
         self._timeout = timeout
         self._running = False
+        self._pbar = None
+        self._lock = Lock()
 
     def _get_output_path(self, _id: str) -> str:
         return f"{self.output_dir}{_id}.txt"
@@ -158,19 +160,27 @@ class Transcriptor:
             msg = self._queue.get()
             download_file(msg.stream, self._get_output_path(msg.video_id))
 
+            with self._lock:
+                self._pbar.update(1)
+
     @contextmanager
     def start(self):
         try:
             self._running = True
+            self._pbar = tqdm(total=0, desc="Transcribing videos")
             yield self
         finally:
             self._pool.close()
             self._pool.join()
             self._running = False
 
-    def transcribe_async(self, stream: pytube.Stream, _id: str):
+    def transcribe_async(self, stream: pytube.Stream, _id: str, total_items: int):
         msg = TranscriptionMsg(video_id=_id, stream=stream)
         self._queue.put(msg, timeout=self._timeout)
+
+        if self._pbar is not None and self._pbar.total != total_items:
+            self._pbar.total = total_items
+            self._pbar.refresh()
 
         if self._tasks < self._pool._processes:
             # print("PUTTING TO WORKER ", self._tasks)
