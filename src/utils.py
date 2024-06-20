@@ -1,15 +1,9 @@
-import logging
 from contextlib import contextmanager
 import speech_recognition as sr
 from pydub import AudioSegment
 import tempfile
 import pytube
-from typing import Generator
-from rich.logging import RichHandler
-
-logging.basicConfig(level=logging.INFO, handlers=[RichHandler(level=logging.INFO)])
-logging.basicConfig(level=logging.ERROR, handlers=[RichHandler(level=logging.ERROR)])
-logger = logging.getLogger("rich")
+from src.logger import logger
 
 
 @contextmanager

@@ -1,5 +1,4 @@
 import pytube
-import logging
 from anyio import to_thread
 import time
 import asyncio
@@ -8,14 +7,10 @@ from queue import Queue
 from threading import Lock
 from multiprocessing import pool
 from contextlib import contextmanager
+from rich.progress import Progress
 from src.utils import transcribe_stream
 from src.schemas import TranscriptionMsg
-from rich.progress import Progress
-from rich.logging import RichHandler
-
-logging.basicConfig(level=logging.INFO, handlers=[RichHandler(level=logging.INFO)])
-logging.basicConfig(level=logging.ERROR, handlers=[RichHandler(level=logging.ERROR)])
-logger = logging.getLogger("rich")
+from src.logger import logger
 
 
 class VideoFetcher:
