@@ -1,0 +1,6 @@
+anyio==4.4.0
+openai-whisper==20231117
+pydub==0.25.1
+pytube==15.0.0
+rich==13.7.1
+SpeechRecognition==3.10.4

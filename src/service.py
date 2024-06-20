@@ -8,7 +8,7 @@ from queue import Queue
 from threading import Lock
 from multiprocessing import pool
 from contextlib import contextmanager
-from src.utils import download_file
+from src.utils import transcribe_stream
 from src.schemas import TranscriptionMsg
 from rich.progress import Progress
 from rich.logging import RichHandler
@@ -75,21 +75,21 @@ class StreamFetcher:
 
         self._videos = Queue(maxsize=10000)
 
-    async def get_stream(self, video: pytube.Video) -> tuple[str, pytube.Stream]:
+    async def get_stream(self, video: pytube.YouTube) -> tuple[str, pytube.Stream]:
         """Get the stream of the video - run in a separate thread
 
         Args:
-            video (pytube.Video): Video object
+            video (pytube.YouTube): Video object
         """
 
         return await to_thread.run_sync(self._get_stream, video)
 
     @staticmethod
-    def _get_stream(video: pytube.Video) -> tuple[str, pytube.Stream]:
+    def _get_stream(video: pytube.YouTube) -> tuple[str, pytube.Stream]:
         """Get the stream of the video
 
         Args:
-            video (pytube.Video): Video object
+            video (pytube.YouTube): Video object
         """
 
         for i in range(1, 4):
@@ -100,6 +100,7 @@ class StreamFetcher:
             except pytube.exceptions.VideoUnavailable as e:
                 # skip video if it's unavailable
                 logger.error(f"Video with id: {video.video_id} is unavailable - {e}")
+                break
             except Exception as e:
                 logger.error(f"Error getting video {video.video_id} - {e}")
                 if i != 3:
@@ -192,7 +193,7 @@ class Transcriptor:
                 break
 
             msg = self._queue.get()
-            download_file(msg.stream, self._get_output_path(msg.video_id))
+            transcribe_stream(msg.stream, self._get_output_path(msg.video_id))
 
             with self._lock:
                 self._pbar.update(self._transcription_task, advance=1)
