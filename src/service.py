@@ -2,7 +2,6 @@ import pytube
 import logging
 from anyio import to_thread
 import time
-from tqdm.asyncio import tqdm
 import asyncio
 from typing import AsyncGenerator, Callable
 from queue import Queue
@@ -11,9 +10,12 @@ from multiprocessing import pool
 from contextlib import contextmanager
 from src.utils import download_file
 from src.schemas import TranscriptionMsg
+from rich.progress import Progress
+from rich.logging import RichHandler
 
-logging.basicConfig(level=logging.INFO)
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO, handlers=[RichHandler(level=logging.INFO)])
+logging.basicConfig(level=logging.ERROR, handlers=[RichHandler(level=logging.ERROR)])
+logger = logging.getLogger("rich")
 
 
 class VideoFetcher:
@@ -78,7 +80,7 @@ class StreamFetcher:
                 stream = streams.get_audio_only() or streams.first()
                 return video.video_id, stream
             except Exception as e:
-                logging.error(f"Error getting video {video.video_id} - {e}")
+                logger.error(f"Error getting video {video.video_id} - {e}")
 
             if i != 2:
                 # add exponential backoff
@@ -86,25 +88,26 @@ class StreamFetcher:
 
         return None, None
 
-    async def list(self) -> AsyncGenerator[str, pytube.Stream]:
+    async def list(self, pbar: Progress) -> AsyncGenerator[str, pytube.Stream]:
         """Generate ids and streams urls of the channel videos"""
 
         with VideoFetcher(self.channel, self._videos).run_async() as video_fetcher:
-
-            tasks, pbar = [], tqdm(total=video_fetcher._total, desc="Fetching videos")
+            tasks, fetch_task = [], pbar.add_task(
+                total=video_fetcher._total, description="Fetching videos"
+            )
 
             while video_fetcher.running or self._videos.qsize() > 0:
                 if self._videos.qsize() == 0:
                     await asyncio.sleep(0.1)
                     continue
 
-                if pbar.total != video_fetcher._total:
-                    pbar.total = video_fetcher._total
-                    pbar.refresh()
+                if pbar.tasks[fetch_task].total != video_fetcher._total:
+                    pbar.update(fetch_task, total=video_fetcher._total)
 
                 video = self._videos.get()
                 tasks.append(self.get_stream(video))
-                pbar.update(1)
+
+                pbar.update(fetch_task, advance=1)
 
                 if len(tasks) == self.batch or self._videos.qsize() == 0:
                     for _id, stream in await asyncio.gather(*tasks):
@@ -132,13 +135,14 @@ class Transcriptor:
         self._timeout = timeout
         self._running = False
         self._pbar = None
+        self._transcription_task = None
         self._lock = Lock()
 
     def _get_output_path(self, _id: str) -> str:
         return f"{self.output_dir}{_id}.txt"
 
     def _error_callback(self, e: Exception, *args, **kwargs):
-        logging.error(f"Error while transcribing - {e}")
+        logger.error(f"Error while transcribing - {e}")
         self._tasks = max(0, self._tasks - 1)
 
     def _callback(self, *args, **kwargs):
@@ -161,27 +165,33 @@ class Transcriptor:
             download_file(msg.stream, self._get_output_path(msg.video_id))
 
             with self._lock:
-                self._pbar.update(1)
+                self._pbar.update(self._transcription_task, advance=1)
 
     @contextmanager
-    def start(self):
+    def start(self, pbar: Progress):
         try:
             self._running = True
-            self._pbar = tqdm(total=0, desc="Transcribing videos")
+            self._pbar = pbar
+            self._transcription_task = self._pbar.add_task(
+                total=0, description="Transcribing videos"
+            )
+
             yield self
         finally:
             self._pool.close()
             self._pool.join()
             self._running = False
+            self._pbar = None
 
     def transcribe_async(self, stream: pytube.Stream, _id: str, total_items: int):
         msg = TranscriptionMsg(video_id=_id, stream=stream)
         self._queue.put(msg, timeout=self._timeout)
 
-        if self._pbar is not None and self._pbar.total != total_items:
-            self._pbar.total = total_items
-            self._pbar.refresh()
+        if (
+            self._pbar is not None
+            and self._pbar.tasks[self._transcription_task].total != total_items
+        ):
+            self._pbar.update(self._transcription_task, total=total_items)
 
         if self._tasks < self._pool._processes:
-            # print("PUTTING TO WORKER ", self._tasks)
             self._run_transcription_worker()
