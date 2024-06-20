@@ -30,6 +30,12 @@ class VideoFetcher:
 
     @contextmanager
     def run_async(self, callback: Callable | None = None):
+        """Run the fetcher in an async context manager
+
+        Args:
+            callback (Callable, optional): Callback function. Defaults to None.
+        """
+
         try:
             self.running = True
 
@@ -55,7 +61,7 @@ class VideoFetcher:
         return _callback
 
     def _fetch(self):
-        """Generate ids and streams urls of the channel videos"""
+        """Get all video ids of the specified channel and put them into the queue"""
 
         for video in self.channel.videos:
             self._total += 1
@@ -69,27 +75,45 @@ class StreamFetcher:
 
         self._videos = Queue(maxsize=10000)
 
-    async def get_stream(self, video) -> tuple[str, pytube.Stream]:
+    async def get_stream(self, video: pytube.Video) -> tuple[str, pytube.Stream]:
+        """Get the stream of the video - run in a separate thread
+
+        Args:
+            video (pytube.Video): Video object
+        """
+
         return await to_thread.run_sync(self._get_stream, video)
 
     @staticmethod
-    def _get_stream(video) -> tuple[str, pytube.Stream]:
+    def _get_stream(video: pytube.Video) -> tuple[str, pytube.Stream]:
+        """Get the stream of the video
+
+        Args:
+            video (pytube.Video): Video object
+        """
+
         for i in range(1, 4):
             try:
                 streams = video.streams
                 stream = streams.get_audio_only() or streams.first()
                 return video.video_id, stream
+            except pytube.exceptions.VideoUnavailable as e:
+                # skip video if it's unavailable
+                logger.error(f"Video with id: {video.video_id} is unavailable - {e}")
             except Exception as e:
                 logger.error(f"Error getting video {video.video_id} - {e}")
-
-            if i != 2:
-                # add exponential backoff
-                time.sleep(2**i)
+                if i != 3:
+                    # add exponential backoff
+                    time.sleep(2**i)
 
         return None, None
 
     async def list(self, pbar: Progress) -> AsyncGenerator[str, pytube.Stream]:
-        """Generate ids and streams urls of the channel videos"""
+        """Generate ids and streams urls of the channel videos
+
+        Args:
+            pbar (Progress): Rich progress bar
+        """
 
         with VideoFetcher(self.channel, self._videos).run_async() as video_fetcher:
             tasks, fetch_task = [], pbar.add_task(
@@ -139,6 +163,12 @@ class Transcriptor:
         self._lock = Lock()
 
     def _get_output_path(self, _id: str) -> str:
+        """Get the output path of the transcribed video
+
+        Args:
+            _id (str): Video id
+        """
+
         return f"{self.output_dir}{_id}.txt"
 
     def _error_callback(self, e: Exception, *args, **kwargs):
@@ -169,6 +199,12 @@ class Transcriptor:
 
     @contextmanager
     def start(self, pbar: Progress):
+        """Start transcription context manager
+
+        Args:
+            pbar (Progress): Rich progress bar
+        """
+
         try:
             self._running = True
             self._pbar = pbar
@@ -184,6 +220,14 @@ class Transcriptor:
             self._pbar = None
 
     def transcribe_async(self, stream: pytube.Stream, _id: str, total_items: int):
+        """Transcribe the video asynchronously
+
+        Args:
+            stream (pytube.Stream): Video stream
+            _id (str): Video id
+            total_items (int): Total number of items
+        """
+
         msg = TranscriptionMsg(video_id=_id, stream=stream)
         self._queue.put(msg, timeout=self._timeout)
 

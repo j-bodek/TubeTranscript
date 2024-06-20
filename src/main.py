@@ -14,6 +14,13 @@ class ChannelTranscriptor:
         self.transcriptor = Transcriptor(output_dir, background_processes)
 
     def _output_dir(self, channel_id: str, output_dir: str) -> str:
+        """Create output directory for the channel videos
+
+        Args:
+            channel_id (str): Channel id
+            output_dir (str): Output directory
+        """
+
         _dir = f"{output_dir.rstrip('/')}/{channel_id}/"
         if not os.path.exists(_dir):
             os.makedirs(_dir)
@@ -21,6 +28,8 @@ class ChannelTranscriptor:
         return _dir
 
     async def transcribe(self):
+        """Transcribe the channel videos"""
+
         try:
             self._pbar = Progress(expand=True)
             self._pbar.start()
