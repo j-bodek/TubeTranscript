@@ -143,11 +143,13 @@ class Transcriptor:
     def __init__(
         self,
         output_dir: str,
+        model: str,
         background_processes: int = 5,
         max_queuesize: int = 50,
         timeout: int = 60 * 60,
     ):
         self.output_dir = output_dir
+        self.model = model
 
         self._tasks = 0
         self._pool = pool.ThreadPool(processes=background_processes)
@@ -188,7 +190,9 @@ class Transcriptor:
                 break
 
             msg = self._queue.get()
-            transcribe_stream(msg.stream, self._get_output_path(msg.video_id))
+            transcribe_stream(
+                msg.stream, self._get_output_path(msg.video_id), self.model
+            )
 
             with self._lock:
                 self._pbar.update(self._transcription_task, advance=1)

@@ -33,6 +33,7 @@ def export_audio(stream: pytube.Stream) -> str:
 def transcribe_stream(
     stream: pytube.Stream,
     output_path: str,
+    model: str,
     retry: int = 2,
 ):
     """Download the stream and transcribe it to text
@@ -51,7 +52,7 @@ def transcribe_stream(
                 with sr.AudioFile(audio_file_name) as source:
                     audio = r.record(source)
 
-                    text = r.recognize_whisper(audio)
+                    text = r.recognize_whisper(audio, model=model)
                     with open(output_path, "w") as f:
                         f.write(text)
                     break
